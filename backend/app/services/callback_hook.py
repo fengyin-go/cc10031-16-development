@@ -146,6 +146,25 @@ class CallbackHookService:
             "duration_ms": duration_ms,
         }
 
+    def record_delivery(self, receipt: dict[str, Any]) -> None:
+        """登记模板版本交付回执（由 template_version 服务调用）。
+
+        回执持久化两版模板标识，供下游按字段差异类别核对。
+        """
+        self._callbacks.append({
+            "callback_id": receipt["receipt_id"],
+            "batch_ref": receipt["batch_ref"],
+            "strategy": f"template_delivery:{receipt['receipt_kind']}",
+            "endpoint": "/api/webhooks/rpa/delivery",
+            "success": True,
+            "response_code": 200,
+            "base_version_id": receipt["base_version_id"],
+            "delivered_version_id": receipt["delivered_version_id"],
+            "diff_id": receipt.get("diff_id"),
+            "file_id": receipt.get("file_id"),
+            "executed_at": receipt["delivered_at"],
+        })
+
     def list_callbacks(self,
                         batch_ref: str | None = None) -> list[dict[str, Any]]:
         """列出回调记录。"""

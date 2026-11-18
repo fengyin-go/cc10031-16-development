@@ -106,3 +106,71 @@ export async function loadRecoveryStats(): Promise<Record<string, unknown>> {
   if (!response.ok) throw new Error('恢复状态查询失败')
   return await response.json()
 }
+
+/* ---- 模板版本比对 ---- */
+
+export type TemplateDiff = {
+  diff_id: string
+  batch_ref: string
+  base_version_id: string
+  current_version_id: string
+  added: { field: string; type: string }[]
+  removed: { field: string; type: string }[]
+  type_changed: { field: string; old_type: string; new_type: string }[]
+  null_policy_changed: boolean
+  base_null_policy: string
+  current_null_policy: string
+  receipt_kind: string
+  created_at: string
+}
+
+export type ProcessingItem = {
+  item_id: string
+  batch_ref: string
+  template_id: number
+  batch_start_version_id: string
+  delivered_version_id: string | null
+  diff_id: string | null
+  status: string
+  output_file: Record<string, unknown> | null
+  receipt: Record<string, unknown> | null
+  created_at: string
+}
+
+/** 模板版本比对：触发 快照→差异→输出文件→处理项 链路 */
+export async function runTemplateVersionFlow(payload: {
+  batch_ref: string
+  template_id: number
+  strategy?: string
+  incoming_template?: Record<string, unknown>
+}): Promise<Record<string, unknown>> {
+  const response = await request('/api/pipeline/template-version-flow', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  return await response.json()
+}
+
+/** 模板版本比对：按来源批次查询字段级差异清单 */
+export async function loadTemplateDiffs(batchRef?: string): Promise<{ count: number; diffs: TemplateDiff[] }> {
+  const query = batchRef ? `?batch_ref=${encodeURIComponent(batchRef)}` : ''
+  const response = await request(`/api/template-diffs${query}`)
+  if (!response.ok) throw new Error('差异清单读取失败')
+  return await response.json()
+}
+
+/** 模板版本比对：处理项列表（受控只读） */
+export async function loadProcessingItems(batchRef?: string): Promise<{ count: number; items: ProcessingItem[] }> {
+  const query = batchRef ? `?batch_ref=${encodeURIComponent(batchRef)}` : ''
+  const response = await request(`/api/processing-items${query}`)
+  if (!response.ok) throw new Error('处理项读取失败')
+  return await response.json()
+}
+
+/** 模板版本比对：交付处理项，按字段差异类别选择回执 */
+export async function deliverProcessingItem(itemId: string): Promise<Record<string, unknown>> {
+  const response = await request(`/api/processing-items/${encodeURIComponent(itemId)}/deliver`, {
+    method: 'POST',
+  })
+  return await response.json()
+}

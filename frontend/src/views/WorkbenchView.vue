@@ -90,6 +90,11 @@
       <span>共 {{ total }} 条{{ meta.name }}记录</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
+
+    <TemplateDiffPanel
+      v-if="meta.key === 'output_format' || meta.key === 'batch_tracker'"
+      :default-template-id="meta.key === 'output_format' ? 2 : 2"
+    />
   </section>
 </template>
 
@@ -103,6 +108,7 @@ import {
   moduleMeta,
   runAction as applyAction,
 } from '@/api/backend-service'
+import TemplateDiffPanel from '@/views/TemplateDiffPanel.vue'
 import type { EntryRow } from '@/data/types'
 
 const props = defineProps<{ moduleKey: string }>()

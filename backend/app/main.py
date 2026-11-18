@@ -5,13 +5,15 @@
 """
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import ROUTERS
 from app.store import store
-from app.services import runtime_session, callback_hook
+from app.services import runtime_session, callback_hook, template_version_service
 
 app = FastAPI(title="RPA流程自动化中心", version="1.0.0")
 
@@ -59,6 +61,7 @@ def nodestats(module: str | None = Query(default=None)) -> dict[str, object]:
     # 附加非模块服务
     snapshots["runtime_session"] = runtime_session.domain_snapshot()
     snapshots["callback_hook"] = callback_hook.domain_snapshot()
+    snapshots["template_version"] = template_version_service.domain_snapshot()
 
     # 存储基础设施概览
     infra = {
@@ -226,6 +229,77 @@ def pipeline_element_execution() -> dict[str, object]:
     """触发元素定位与自动化执行流程。"""
     result = runtime_session.consume_strategies_and_execute()
     return {"ok": True, "result": result}
+
+
+# ---- 模板版本比对 API ----
+
+@app.post("/api/pipeline/template-version-flow")
+def pipeline_template_version_flow(payload: dict[str, Any]) -> dict[str, object]:
+    """模板版本比对链路：快照 → 字段级差异 → 带两版标识的输出文件 → 处理项。
+
+    请求体:
+        batch_ref: 来源批次（必填，需已有已校验采集记录）
+        template_id: 输出模板 ID（必填）
+        strategy: batch_start=按批次启动时模板生成；
+                  current=按当前模板重新生成（默认 batch_start）
+        incoming_template: 新到达输出回调交付的模板内容（可选，
+                  缺省读取 output_format 模块当前记录）
+
+    冲突约束：批次校验完成后模板发生更新时，两种策略都只能交付
+    一个带模板版本的文件；已生成输出文件的处理项直接复用。
+    """
+    batch_ref = str(payload.get("batch_ref") or "").strip()
+    template_id = payload.get("template_id")
+    if not batch_ref or template_id is None:
+        return {"ok": False, "error": "缺少必填参数：batch_ref、template_id"}
+    result = template_version_service.run_version_compare_flow(
+        batch_ref=batch_ref,
+        template_id=int(template_id),
+        strategy=str(payload.get("strategy") or "batch_start"),
+        incoming_template=payload.get("incoming_template"),
+    )
+    return result
+
+
+@app.get("/api/template-versions")
+def list_template_versions(
+        template_id: int | None = Query(default=None)) -> dict[str, object]:
+    """模板版本快照列表（含字段映射与空值口径）。"""
+    versions = template_version_service.list_versions(template_id)
+    return {"count": len(versions), "versions": versions}
+
+
+@app.get("/api/template-diffs")
+def list_template_diffs(
+        batch_ref: str | None = Query(default=None)) -> dict[str, object]:
+    """字段级差异清单：按来源批次打开，查看新增、删除和改型字段。"""
+    diffs = template_version_service.list_diffs(batch_ref)
+    return {"count": len(diffs), "diffs": diffs}
+
+
+@app.get("/api/processing-items")
+def list_processing_items(
+        batch_ref: str | None = Query(default=None)) -> dict[str, object]:
+    """处理项列表（受控只读：只能查看不能改动）。"""
+    items = template_version_service.list_items(batch_ref)
+    return {"count": len(items), "items": items}
+
+
+@app.get("/api/processing-items/{item_id}")
+def get_processing_item(item_id: str) -> dict[str, object]:
+    """处理项详情：含输出文件、差异清单引用与交付回执。"""
+    item = template_version_service.get_item(item_id)
+    if item is None:
+        return {"ok": False, "error": f"处理项 {item_id} 不存在"}
+    consistency = template_version_service.consistency_check(item_id)
+    return {"ok": True, "item": item, "consistency": consistency}
+
+
+@app.post("/api/processing-items/{item_id}/deliver")
+def deliver_processing_item(item_id: str) -> dict[str, object]:
+    """交付处理项：回调接口使用已记录的输出文件，按字段差异类别
+    选择交付回执，并持久化两版模板标识。重复交付幂等。"""
+    return template_version_service.deliver(item_id)
 
 
 # 资源路由含 /api/{module}，必须放在 health / overview 之后注册，
